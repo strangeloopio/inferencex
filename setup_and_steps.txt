@@ -1,0 +1,353 @@
+================================================================================
+                    MODAL vLLM MULTI-GPU INFERENCE BENCHMARK
+                         Documentation & Steps Guide
+================================================================================
+
+PROJECT OVERVIEW
+----------------
+This project benchmarks vLLM inference performance across different GPU and
+concurrent user configurations on Modal cloud infrastructure. It measures:
+- Throughput per GPU (tokens/s/GPU)
+- End-to-End Latency (seconds)
+- User Interactivity (tokens/s/user)
+- Time to First Token (seconds)
+- Power Efficiency (tokens/s/kW) - from real nvidia-smi measurements
+
+Default Model: Qwen/Qwen3-8B-FP8 (configurable)
+Supported GPUs: NVIDIA H100, H200, B200
+Platform: Modal (https://modal.com)
+
+Reference: https://inferencemax.semianalysis.com/
+
+
+================================================================================
+                              PREREQUISITES
+================================================================================
+
+1. Python 3.10+ installed
+2. A Modal account (https://modal.com)
+3. Internet connection
+
+
+================================================================================
+                              FILE STRUCTURE
+================================================================================
+
+modal_inference/
+├── .github/
+│   └── workflows/
+│       └── benchmark.yml            # GitHub Actions workflow (manual trigger)
+├── benchmark_gpu_users.py           # Benchmark script (ISL/OSL configurable)
+├── benchmark_gpu_users_results.json # Benchmark results data
+├── gpu_users_bar_comparison.png     # 5-panel summary chart
+├── plot_gpu_users.py                # Plotting script (reads power logs)
+├── power_log_*gpu_*.csv             # Power logs from nvidia-smi
+├── requirements.txt                 # Dependencies
+├── setup_and_steps.txt              # This file
+├── venv/                            # Virtual environment
+└── vllm_multi_gpu.py                # Modal deployment with power monitoring
+
+
+================================================================================
+                           STEP-BY-STEP SETUP
+================================================================================
+
+STEP 1: CREATE VIRTUAL ENVIRONMENT
+----------------------------------
+    python -m venv venv
+
+    # Activate on Windows:
+    venv\Scripts\activate
+
+    # Activate on Linux/Mac:
+    source venv/bin/activate
+
+
+STEP 2: INSTALL DEPENDENCIES
+----------------------------
+    pip install -r requirements.txt
+
+    Dependencies:
+    - modal (Modal cloud platform SDK)
+    - aiohttp (async HTTP client for benchmarking)
+    - matplotlib (plotting)
+
+
+STEP 3: AUTHENTICATE WITH MODAL
+-------------------------------
+    python -m modal setup
+
+    This opens a browser for authentication and saves token to ~/.modal.toml
+
+
+STEP 4: DEPLOY MULTI-GPU ENDPOINTS
+----------------------------------
+    python -m modal deploy vllm_multi_gpu.py
+
+    This creates three endpoints with power monitoring:
+    - 1 GPU: https://<workspace>--vllm-multi-gpu-benchmark-serve-1gpu.modal.run
+    - 2 GPU: https://<workspace>--vllm-multi-gpu-benchmark-serve-2gpu.modal.run
+    - 4 GPU: https://<workspace>--vllm-multi-gpu-benchmark-serve-4gpu.modal.run
+
+    Configuration via environment variables (set before deploying):
+      MODEL_NAME      HuggingFace model (default: Qwen/Qwen3-8B-FP8)
+      MODEL_REVISION  Model revision/commit hash
+      GPU_TYPE        GPU type: H100, H200, B200 (default: H100)
+
+    Example with custom configuration:
+      MODEL_NAME="meta-llama/Llama-3-8B" GPU_TYPE="H200" python -m modal deploy vllm_multi_gpu.py
+
+
+STEP 5: RUN BENCHMARKS
+----------------------
+    python benchmark_gpu_users.py \
+      --url-1gpu "https://<workspace>--vllm-multi-gpu-benchmark-serve-1gpu.modal.run" \
+      --url-2gpu "https://<workspace>--vllm-multi-gpu-benchmark-serve-2gpu.modal.run" \
+      --url-4gpu "https://<workspace>--vllm-multi-gpu-benchmark-serve-4gpu.modal.run" \
+      --requests 50 \
+      --isl 1024 \
+      --osl 256
+
+    CLI Options:
+      --requests    Number of requests per configuration (default: 50)
+      --isl         Input Sequence Length in tokens (default: 1024)
+      --osl         Output Sequence Length in tokens (default: 1024)
+
+    ISL/OSL Examples:
+      --isl 1024 --osl 1024    # 1K/1K
+      --isl 1024 --osl 4096    # 1K/4K
+      --isl 4096 --osl 1024    # 4K/1K
+
+    Configurations tested:
+    - 1 GPU / 128 concurrent users
+    - 2 GPU / 128 concurrent users
+    - 2 GPU / 64 concurrent users
+    - 2 GPU / 32 concurrent users
+    - 4 GPU / 32 concurrent users
+    - 4 GPU / 16 concurrent users
+
+    Results saved to: benchmark_gpu_users_results.json
+
+
+STEP 6: DOWNLOAD POWER LOGS
+---------------------------
+    # List available power logs
+    python -m modal run vllm_multi_gpu.py --action logs
+
+    # Download a specific log
+    python -m modal run vllm_multi_gpu.py --action "download power_log_1gpu_YYYYMMDD_HHMMSS.csv"
+
+    # Clear all power logs
+    python -m modal run vllm_multi_gpu.py --action clear
+
+    Power logs contain real nvidia-smi measurements:
+    - timestamp
+    - gpu_id
+    - power_draw_w
+    - temperature_c
+    - gpu_util_pct
+    - mem_util_pct
+    - mem_used_mb
+
+
+STEP 7: GENERATE PLOTS
+----------------------
+    python plot_gpu_users.py
+
+    The script automatically:
+    - Loads benchmark results from JSON
+    - Reads power logs from current directory
+    - Generates 5-panel comparison chart
+
+    CLI Options:
+      --gpu        GPU type for title (default: H100)
+      --model      Model name for title (default: Qwen3-8B-FP8)
+      --results    Path to results JSON (default: benchmark_gpu_users_results.json)
+      --power-logs Directory with power CSV files (default: current dir)
+      --output     Output PNG path (default: gpu_users_bar_comparison.png)
+
+    Example:
+      python plot_gpu_users.py --gpu H100 --model "Qwen3-8B-FP8"
+
+    Generates: gpu_users_bar_comparison.png (5-panel chart)
+    - Throughput per GPU
+    - End-to-End Latency
+    - User Interactivity
+    - Time to First Token
+    - Power Efficiency (from real nvidia-smi data)
+
+
+STEP 8: STOP MODAL APP (to save costs)
+--------------------------------------
+    python -m modal app stop vllm-multi-gpu-benchmark
+
+    Note: Modal auto-scales down after 15 minutes of inactivity
+
+
+================================================================================
+                            BENCHMARK RESULTS
+================================================================================
+
+Configuration comparison (Qwen3-8B-FP8 on H100, ISL=1024, OSL=256):
+
+Config       GPUs   Users   Thru/GPU      Latency   Interactivity   TTFT    Power Eff.
+                            (tok/s/gpu)   (s)       (tok/s/user)    (s)     (tok/s/kW)
+---------------------------------------------------------------------------------------
+1GPU/128U    1      128     1,255         10.2      29.2            1.39    6,907
+2GPU/128U    2      128     653           9.8       30.1            1.23    6,836
+2GPU/64U     2      64      582           9.1       30.3            0.66    6,087
+2GPU/32U     2      32      458           6.8       40.5            0.41    4,792
+4GPU/32U     4      32      165           9.4       34.4            1.78    982
+4GPU/16U     4      16      105           7.2       37.9            0.39    625
+
+Measured Power (nvidia-smi avg during inference):
+- 1 GPU: 182W per GPU
+- 2 GPU: 96W per GPU
+- 4 GPU: 168W per GPU
+
+
+================================================================================
+                            KEY INSIGHTS
+================================================================================
+
+1. 1 GPU WITH 128 USERS IS OPTIMAL FOR THROUGHPUT & EFFICIENCY
+   - Highest throughput per GPU (1,255 tok/s)
+   - Best power efficiency (6,907 tok/s/kW)
+   - The 8B model fits entirely on 1 GPU
+
+2. 2 GPU / 32 USERS IS BEST FOR USER EXPERIENCE
+   - Lowest latency (6.8s)
+   - Best interactivity (40.5 tok/s/user)
+   - Good balance of throughput and responsiveness
+
+3. 4 GPU CONFIGURATIONS ARE INEFFICIENT FOR 8B MODELS
+   - Tensor parallelism overhead hurts performance
+   - Worst power efficiency (625-982 tok/s/kW)
+   - Only beneficial for models too large for fewer GPUs
+
+4. TTFT IMPROVES WITH FEWER CONCURRENT USERS
+   - Less queuing = faster first token
+   - 4GPU/16U has best TTFT (0.39s)
+
+
+================================================================================
+                          POWER MONITORING
+================================================================================
+
+Power data is captured automatically via nvidia-smi during inference:
+- Logged every 1 second to Modal Volume
+- Only readings with GPU utilization > 5% are used for efficiency calc
+- Stored as CSV files: power_log_{n_gpu}gpu_{timestamp}.csv
+
+The 5th panel "Power Efficiency" uses REAL measured power, not estimates.
+
+
+================================================================================
+                       GITHUB ACTIONS (CI/CD)
+================================================================================
+
+The project includes a GitHub Actions workflow for automated/manual benchmarking.
+
+SETUP GITHUB ACTIONS
+--------------------
+1. Push the repository to GitHub
+
+2. Add Repository Secrets (Settings > Secrets > Actions):
+   - MODAL_TOKEN_ID     : Your Modal token ID (from ~/.modal.toml)
+   - MODAL_TOKEN_SECRET : Your Modal token secret (from ~/.modal.toml)
+   - MODAL_WORKSPACE    : Your Modal workspace name (e.g., "achal-workspace")
+
+3. The workflow file is at: .github/workflows/benchmark.yml
+
+
+MANUAL TRIGGER
+--------------
+1. Go to your GitHub repo > Actions tab
+2. Select "vLLM Multi-GPU Benchmark" workflow
+3. Click "Run workflow"
+4. Configure optional inputs:
+   - requests: Number of requests per config (default: 50)
+   - isl: Input Sequence Length (default: 1024)
+   - osl: Output Sequence Length (default: 256)
+   - gpu_type: H100, H200, or B200
+   - model_name: HuggingFace model path
+5. Click "Run workflow"
+
+
+AUTOMATIC WEEKLY RUNS (Optional)
+--------------------------------
+To enable automatic weekly benchmarks, uncomment the schedule section in
+.github/workflows/benchmark.yml:
+
+    schedule:
+      - cron: '0 2 * * 0'  # Every Sunday at 2 AM UTC
+
+
+WORKFLOW STEPS
+--------------
+The GitHub Actions workflow automatically:
+1. Sets up Python and installs dependencies
+2. Authenticates with Modal using secrets
+3. Deploys the vLLM endpoints
+4. Waits for endpoints to warm up
+5. Runs the benchmark suite
+6. Downloads power logs from Modal Volume
+7. Generates the 5-panel comparison chart
+8. Stops the Modal app (to save costs)
+9. Uploads results as artifacts (retained 90 days)
+
+
+ACCESSING RESULTS
+-----------------
+After each run, download artifacts from GitHub:
+
+1. Go to your GitHub repo > Actions tab
+2. Click on the completed workflow run
+3. Scroll down to the "Artifacts" section at the bottom
+4. Download "benchmark-results-<run_number>.zip"
+5. Extract to get:
+   - gpu_users_bar_comparison.png (5-panel chart)
+   - benchmark_gpu_users_results.json (raw benchmark data)
+   - power_log_*.csv (nvidia-smi power measurements)
+
+Artifacts are retained for 90 days.
+
+
+================================================================================
+                          USEFUL COMMANDS
+================================================================================
+
+List Modal apps:
+    python -m modal app list
+
+View app logs:
+    python -m modal app logs vllm-multi-gpu-benchmark
+
+Stop app:
+    python -m modal app stop vllm-multi-gpu-benchmark
+
+Redeploy:
+    python -m modal deploy vllm_multi_gpu.py
+
+List power logs:
+    python -m modal run vllm_multi_gpu.py --action logs
+
+Download power log:
+    python -m modal run vllm_multi_gpu.py --action "download <filename>"
+
+
+================================================================================
+                            REFERENCES
+================================================================================
+
+- Modal Documentation: https://modal.com/docs
+- Modal vLLM Example: https://modal.com/docs/examples/vllm_inference
+- Modal CUDA Guide: https://modal.com/docs/guide/cuda
+- vLLM Documentation: https://docs.vllm.ai/
+- InferenceMAX Benchmarks: https://inferencemax.semianalysis.com/
+- Qwen3 Model: https://huggingface.co/Qwen/Qwen3-8B-FP8
+
+
+================================================================================
+                         CREATED: November 2024
+================================================================================

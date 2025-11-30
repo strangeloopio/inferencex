@@ -1,0 +1,176 @@
+name: vLLM Multi-GPU Benchmark
+
+on:
+  # Manual trigger with configurable inputs
+  workflow_dispatch:
+    inputs:
+      requests:
+        description: 'Number of requests per configuration'
+        required: false
+        default: '50'
+        type: string
+      isl:
+        description: 'Input Sequence Length (tokens)'
+        required: false
+        default: '1024'
+        type: string
+      osl:
+        description: 'Output Sequence Length (tokens)'
+        required: false
+        default: '256'
+        type: string
+      gpu_type:
+        description: 'GPU type for labels'
+        required: false
+        default: 'H100'
+        type: choice
+        options:
+          - H100
+          - H200
+          - B200
+      model_name:
+        description: 'Model name'
+        required: false
+        default: 'Qwen/Qwen3-8B-FP8'
+        type: string
+
+  # Optional: Weekly scheduled run (every Sunday at 2 AM UTC)
+  # Uncomment to enable automatic weekly benchmarks
+  # schedule:
+  #   - cron: '0 2 * * 0'
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Authenticate with Modal
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+        run: |
+          echo "Setting up Modal authentication..."
+          mkdir -p ~/.modal
+          echo "[default]" > ~/.modal.toml
+          echo "token_id = \"$MODAL_TOKEN_ID\"" >> ~/.modal.toml
+          echo "token_secret = \"$MODAL_TOKEN_SECRET\"" >> ~/.modal.toml
+
+      - name: Deploy Modal endpoints
+        env:
+          MODEL_NAME: ${{ github.event.inputs.model_name || 'Qwen/Qwen3-8B-FP8' }}
+          GPU_TYPE: ${{ github.event.inputs.gpu_type || 'H100' }}
+        run: |
+          echo "Deploying vLLM endpoints with MODEL_NAME=$MODEL_NAME, GPU_TYPE=$GPU_TYPE"
+          python -m modal deploy vllm_multi_gpu.py
+
+      - name: Wait for endpoints to warm up
+        run: |
+          echo "Waiting 60 seconds for endpoints to initialize..."
+          sleep 60
+
+      - name: Get Modal workspace name
+        id: workspace
+        run: |
+          # Extract workspace from modal app list
+          WORKSPACE=$(python -m modal app list 2>/dev/null | grep "vllm-multi-gpu" | head -1 | awk '{print $1}' | cut -d'-' -f1 || echo "")
+          if [ -z "$WORKSPACE" ]; then
+            # Fallback: try to get from modal config
+            WORKSPACE=$(python -c "import modal; print(modal.config._profile)" 2>/dev/null || echo "default")
+          fi
+          echo "workspace=$WORKSPACE" >> $GITHUB_OUTPUT
+          echo "Detected workspace: $WORKSPACE"
+
+      - name: Run benchmarks
+        env:
+          REQUESTS: ${{ github.event.inputs.requests || '50' }}
+          ISL: ${{ github.event.inputs.isl || '1024' }}
+          OSL: ${{ github.event.inputs.osl || '256' }}
+        run: |
+          # Construct endpoint URLs (adjust workspace name as needed)
+          # The URLs follow Modal's naming convention
+          BASE_URL="https://${{ secrets.MODAL_WORKSPACE }}--vllm-multi-gpu-benchmark"
+
+          echo "Running benchmarks with ISL=$ISL, OSL=$OSL, requests=$REQUESTS"
+          python benchmark_gpu_users.py \
+            --url-1gpu "${BASE_URL}-serve-1gpu.modal.run" \
+            --url-2gpu "${BASE_URL}-serve-2gpu.modal.run" \
+            --url-4gpu "${BASE_URL}-serve-4gpu.modal.run" \
+            --requests $REQUESTS \
+            --isl $ISL \
+            --osl $OSL
+
+      - name: Download power logs
+        run: |
+          echo "Listing available power logs..."
+          python -m modal run vllm_multi_gpu.py --action logs
+
+          echo "Downloading power logs..."
+          # Get list of log files and download each
+          for logfile in $(python -m modal run vllm_multi_gpu.py --action logs 2>/dev/null | grep "power_log_" || true); do
+            echo "Downloading $logfile..."
+            python -m modal run vllm_multi_gpu.py --action "download $logfile" || true
+          done
+
+          echo "Downloaded power logs:"
+          ls -la power_log_*.csv 2>/dev/null || echo "No power logs found"
+
+      - name: Generate plots
+        env:
+          GPU_TYPE: ${{ github.event.inputs.gpu_type || 'H100' }}
+          MODEL_NAME: ${{ github.event.inputs.model_name || 'Qwen/Qwen3-8B-FP8' }}
+        run: |
+          # Extract just the model name without org prefix for cleaner labels
+          MODEL_SHORT=$(echo "$MODEL_NAME" | sed 's|.*/||')
+
+          echo "Generating plots for $MODEL_SHORT on $GPU_TYPE"
+          python plot_gpu_users.py \
+            --gpu "$GPU_TYPE" \
+            --model "$MODEL_SHORT" \
+            --results benchmark_gpu_users_results.json \
+            --output gpu_users_bar_comparison.png
+
+      - name: Stop Modal app
+        if: always()
+        run: |
+          echo "Stopping Modal app to save costs..."
+          python -m modal app stop vllm-multi-gpu-benchmark || true
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ github.run_number }}
+          path: |
+            benchmark_gpu_users_results.json
+            gpu_users_bar_comparison.png
+            power_log_*.csv
+          retention-days: 90
+
+      - name: Summary
+        run: |
+          echo "## Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Configuration:**" >> $GITHUB_STEP_SUMMARY
+          echo "- Model: ${{ github.event.inputs.model_name || 'Qwen/Qwen3-8B-FP8' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- GPU: ${{ github.event.inputs.gpu_type || 'H100' }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ISL: ${{ github.event.inputs.isl || '1024' }} tokens" >> $GITHUB_STEP_SUMMARY
+          echo "- OSL: ${{ github.event.inputs.osl || '256' }} tokens" >> $GITHUB_STEP_SUMMARY
+          echo "- Requests: ${{ github.event.inputs.requests || '50' }} per config" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Artifacts:**" >> $GITHUB_STEP_SUMMARY
+          echo "- benchmark_gpu_users_results.json (raw data)" >> $GITHUB_STEP_SUMMARY
+          echo "- gpu_users_bar_comparison.png (5-panel chart)" >> $GITHUB_STEP_SUMMARY
+          echo "- power_log_*.csv (nvidia-smi measurements)" >> $GITHUB_STEP_SUMMARY

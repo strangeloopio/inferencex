@@ -1,0 +1,25 @@
+# Virtual environment
+venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Power logs (generated during benchmarks)
+power_log_*.csv
+
+# Results (regenerated each run)
+benchmark_gpu_users_results.json
+gpu_users_bar_comparison.png
