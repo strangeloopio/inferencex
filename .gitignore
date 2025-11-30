@@ -22,4 +22,7 @@ power_log_*.csv
 
 # Results (regenerated each run)
 benchmark_gpu_users_results.json
-gpu_users_bar_comparison.png
+/gpu_users_bar_comparison.png
+
+# Keep assets folder for README
+!assets/
