@@ -16,13 +16,11 @@ Measures performance across different GPU and concurrent user configurations:
 ## Table of Contents
 
 - [Sample Results](#sample-results)
+- [Key Insights](#key-insights)
 - [Architecture](#architecture)
 - [Option 1: Local Setup](#option-1-local-setup)
 - [Option 2: GitHub Actions](#option-2-github-actions)
 - [Configuration Examples](#configuration-examples)
-- [Power Monitoring](#power-monitoring)
-- [Key Insights](#key-insights)
-- [Useful Commands](#useful-commands)
 - [References](#references)
 
 ---
@@ -41,6 +39,29 @@ Measures performance across different GPU and concurrent user configurations:
 | 2GPU/32U | 2 | 32 | 458 tok/s | 6.8s | 40.5 tok/s/user | 0.41s | 4,792 tok/s/kW |
 | 4GPU/32U | 4 | 32 | 165 tok/s | 9.4s | 34.4 tok/s/user | 1.78s | 982 tok/s/kW |
 | 4GPU/16U | 4 | 16 | 105 tok/s | 7.2s | 37.9 tok/s/user | 0.39s | 625 tok/s/kW |
+
+---
+
+## Key Insights
+
+1. **1 GPU / 128 users is optimal for throughput & efficiency**
+   - Highest throughput per GPU (1,255 tok/s)
+   - Best power efficiency (6,907 tok/s/kW)
+   - The 8B model fits entirely on 1 GPU
+
+2. **2 GPU / 32 users is best for user experience**
+   - Lowest latency (6.8s)
+   - Best interactivity (40.5 tok/s/user)
+   - Good balance of throughput and responsiveness
+
+3. **4 GPU configurations are inefficient for 8B models**
+   - Tensor parallelism overhead hurts performance
+   - Worst power efficiency (625-982 tok/s/kW)
+   - Only beneficial for models too large for fewer GPUs
+
+4. **TTFT improves with fewer concurrent users**
+   - Less queuing = faster first token
+   - 4GPU/16U has best TTFT (0.39s)
 
 ---
 
@@ -189,6 +210,72 @@ python -m modal app stop vllm-multi-gpu-benchmark
 ```
 
 Note: Modal auto-scales down after 15 minutes of inactivity.
+
+### Power Monitoring
+
+Power data is captured automatically via nvidia-smi during inference:
+- Logged every 1 second to Modal Volume
+- Only readings with GPU utilization > 5% are used for efficiency calculations
+- Stored as CSV files: `power_log_{n_gpu}gpu_{timestamp}.csv`
+
+**Power Log Format:**
+
+| Column | Description |
+|--------|-------------|
+| `timestamp` | ISO format timestamp |
+| `gpu_id` | GPU index |
+| `power_draw_w` | Power draw in watts |
+| `temperature_c` | GPU temperature |
+| `gpu_util_pct` | GPU utilization % |
+| `mem_util_pct` | Memory utilization % |
+| `mem_used_mb` | Memory used in MB |
+
+**Managing Power Logs:**
+
+```bash
+# List available power logs
+python -m modal run vllm_multi_gpu.py --action logs
+
+# Download a specific log
+python -m modal run vllm_multi_gpu.py --action "download power_log_1gpu_YYYYMMDD_HHMMSS.csv"
+
+# Clear all power logs
+python -m modal run vllm_multi_gpu.py --action clear
+```
+
+### Useful Commands
+
+**Modal Commands:**
+
+```bash
+# List Modal apps
+python -m modal app list
+
+# View app logs
+python -m modal app logs vllm-multi-gpu-benchmark
+
+# Stop app (save costs)
+python -m modal app stop vllm-multi-gpu-benchmark
+
+# Redeploy
+python -m modal deploy vllm_multi_gpu.py
+```
+
+**Plot Commands:**
+
+```bash
+# Default plot
+python plot_gpu_users.py
+
+# Custom GPU and model name
+python plot_gpu_users.py --gpu H200 --model "Llama-3.1-8B"
+
+# Custom paths
+python plot_gpu_users.py \
+  --results path/to/results.json \
+  --power-logs path/to/logs/ \
+  --output my_chart.png
+```
 
 ---
 
@@ -366,99 +453,6 @@ If `MODEL_REVISION` is not set, the latest version from HuggingFace is used.
 | 2GPU/32U | 2 | 32 |
 | 4GPU/32U | 4 | 32 |
 | 4GPU/16U | 4 | 16 |
-
----
-
-## Power Monitoring
-
-Power data is captured automatically via nvidia-smi during inference:
-- Logged every 1 second to Modal Volume
-- Only readings with GPU utilization > 5% are used for efficiency calculations
-- Stored as CSV files: `power_log_{n_gpu}gpu_{timestamp}.csv`
-
-### Power Log Format
-
-| Column | Description |
-|--------|-------------|
-| `timestamp` | ISO format timestamp |
-| `gpu_id` | GPU index |
-| `power_draw_w` | Power draw in watts |
-| `temperature_c` | GPU temperature |
-| `gpu_util_pct` | GPU utilization % |
-| `mem_util_pct` | Memory utilization % |
-| `mem_used_mb` | Memory used in MB |
-
-### Managing Power Logs (Local Only)
-
-```bash
-# List available power logs
-python -m modal run vllm_multi_gpu.py --action logs
-
-# Download a specific log
-python -m modal run vllm_multi_gpu.py --action "download power_log_1gpu_YYYYMMDD_HHMMSS.csv"
-
-# Clear all power logs
-python -m modal run vllm_multi_gpu.py --action clear
-```
-
----
-
-## Key Insights
-
-1. **1 GPU / 128 users is optimal for throughput & efficiency**
-   - Highest throughput per GPU (1,255 tok/s)
-   - Best power efficiency (6,907 tok/s/kW)
-   - The 8B model fits entirely on 1 GPU
-
-2. **2 GPU / 32 users is best for user experience**
-   - Lowest latency (6.8s)
-   - Best interactivity (40.5 tok/s/user)
-   - Good balance of throughput and responsiveness
-
-3. **4 GPU configurations are inefficient for 8B models**
-   - Tensor parallelism overhead hurts performance
-   - Worst power efficiency (625-982 tok/s/kW)
-   - Only beneficial for models too large for fewer GPUs
-
-4. **TTFT improves with fewer concurrent users**
-   - Less queuing = faster first token
-   - 4GPU/16U has best TTFT (0.39s)
-
----
-
-## Useful Commands
-
-### Modal Commands
-
-```bash
-# List Modal apps
-python -m modal app list
-
-# View app logs
-python -m modal app logs vllm-multi-gpu-benchmark
-
-# Stop app (save costs)
-python -m modal app stop vllm-multi-gpu-benchmark
-
-# Redeploy
-python -m modal deploy vllm_multi_gpu.py
-```
-
-### Plot Commands
-
-```bash
-# Default plot
-python plot_gpu_users.py
-
-# Custom GPU and model name
-python plot_gpu_users.py --gpu H200 --model "Llama-3-8B"
-
-# Custom paths
-python plot_gpu_users.py \
-  --results path/to/results.json \
-  --power-logs path/to/logs/ \
-  --output my_chart.png
-```
 
 ---
 
