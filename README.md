@@ -29,6 +29,8 @@ Measures performance across different GPU and concurrent user configurations:
 
 **Qwen3-8B-FP8 on H100** (ISL: 1024, OSL: 256)
 
+*Default benchmark takes ~13 minutes and costs ~$12 on Modal (as of November 2024).*
+
 ![GPU/User Configuration Comparison](assets/gpu_users_bar_comparison.png)
 
 | Config | GPUs | Users | Thru/GPU | Latency | Interactivity | TTFT | Power Eff. |
