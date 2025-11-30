@@ -31,6 +31,8 @@ Measures performance across different GPU and concurrent user configurations:
 
 **Qwen3-8B-FP8 on H100** (ISL: 1024, OSL: 256)
 
+![GPU/User Configuration Comparison](assets/gpu_users_bar_comparison.png)
+
 | Config | GPUs | Users | Thru/GPU | Latency | Interactivity | TTFT | Power Eff. |
 |--------|------|-------|----------|---------|---------------|------|------------|
 | 1GPU/128U | 1 | 128 | 1,255 tok/s | 10.2s | 29.2 tok/s/user | 1.39s | 6,907 tok/s/kW |
