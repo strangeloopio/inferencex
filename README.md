@@ -342,11 +342,19 @@ If `MODEL_REVISION` is not set, the latest version from HuggingFace is used.
 | `--isl` | 1024 | Input Sequence Length in tokens |
 | `--osl` | 256 | Output Sequence Length in tokens |
 
+**What these mean:**
+
+- **requests**: How many inference calls to make per configuration. Higher = more statistically reliable results but longer benchmark time. Each configuration (1GPU/128U, 2GPU/64U, etc.) will process this many requests to calculate average metrics.
+
+- **ISL (Input Sequence Length)**: The number of tokens in the input prompt sent to the model. Simulates different use cases - short prompts (chat) vs long prompts (document analysis). The benchmark generates random tokens of this length.
+
+- **OSL (Output Sequence Length)**: The maximum number of tokens the model generates in response. Controls how much text the model produces per request. Longer outputs test sustained generation performance.
+
 **ISL/OSL Examples:**
 - `--isl 1024 --osl 256` - Short input, short output (chat)
 - `--isl 1024 --osl 1024` - Balanced
-- `--isl 4096 --osl 1024` - Long context input
-- `--isl 1024 --osl 4096` - Long generation output
+- `--isl 4096 --osl 1024` - Long context input (document Q&A)
+- `--isl 1024 --osl 4096` - Long generation output (content creation)
 
 ### GPU/User Configurations Tested
 
